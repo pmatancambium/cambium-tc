@@ -29,6 +29,11 @@ st.markdown(
     .holiday-item {
         margin: 5px 0;
     }
+    .stButton > button {
+        width: 100%;
+        height: 30px;
+        padding: 0px;
+    }
 </style>
 """,
     unsafe_allow_html=True,
@@ -232,7 +237,18 @@ def main():
                     )
                 )
 
-                st.dataframe(styled_df, use_container_width=True)
+                # Create a new DataFrame with the styled data and an additional column for the button
+                display_df = styled_df.data.copy()
+                display_df["TimeCamp Link"] = display_df["Date"].apply(
+                    lambda x: f'<a href="https://app.timecamp.com/app#/timesheets/timer/{x.strftime("%Y-%m-%d")}" target="_blank"><button>View in TimeCamp</button></a>'
+                )
+
+                # Display the DataFrame with the new button column
+                st.write(
+                    display_df.to_html(escape=False, index=False),
+                    unsafe_allow_html=True,
+                )
+
             else:
                 st.error(
                     "Failed to fetch data. Please check your API key and try again."
