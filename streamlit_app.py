@@ -117,11 +117,15 @@ def main():
 
     # Year and Month selection
     current_year = datetime.now().year
+    current_month = datetime.now().month
     year = st.sidebar.selectbox(
-        "Select Year", range(current_year - 2, current_year + 3)
+        "Select Year", range(current_year - 2, current_year + 3), index=2
     )
     month = st.sidebar.selectbox(
-        "Select Month", range(1, 13), format_func=lambda x: calendar.month_name[x]
+        "Select Month",
+        range(1, 13),
+        index=current_month - 1,
+        format_func=lambda x: calendar.month_name[x],
     )
 
     if st.sidebar.button("Fetch Data"):
