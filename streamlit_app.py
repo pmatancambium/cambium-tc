@@ -34,6 +34,9 @@ st.markdown(
         height: 30px;
         padding: 0px;
     }
+    .highlight-warning {
+        background-color: yellow !important;
+    }
 </style>
 """,
     unsafe_allow_html=True,
@@ -219,15 +222,23 @@ def main():
                 st.subheader("Detailed Work Log")
 
                 # Function to apply color to Status column
-                def color_status(val):
-                    return f'background-color: {"yellow" if val == "Warning" else ""}'
+                def color_status(row):
+                    return [
+                        "background-color: yellow" if row.Status == "Warning" else ""
+                        for _ in row
+                    ]
 
                 # Apply styling
-                styled_df = (
-                    df[["Date", "Day", "Hours", "Min Hours", "Missing Hours", "Status"]]
-                    .sort_values("Date", ascending=False)
-                    .style.applymap(color_status, subset=["Status"])
-                    .format(
+                styled_df = df.style.apply(color_status, axis=1)
+
+                # Create a new DataFrame with the styled data and an additional column for the button
+                df["TimeCamp Link"] = df["Date"].apply(
+                    lambda x: f'<a href="https://app.timecamp.com/app#/timesheets/timer/{x.strftime("%Y-%m-%d")}" target="_blank"><button>View in TimeCamp</button></a>'
+                )
+
+                # Display the DataFrame with the new button column
+                st.write(
+                    styled_df.format(
                         {
                             "Date": lambda x: x.strftime("%Y-%m-%d"),
                             "Hours": "{:.2f}",
@@ -235,17 +246,18 @@ def main():
                             "Missing Hours": "{:.2f}",
                         }
                     )
-                )
-
-                # Create a new DataFrame with the styled data and an additional column for the button
-                display_df = styled_df.data.copy()
-                display_df["TimeCamp Link"] = display_df["Date"].apply(
-                    lambda x: f'<a href="https://app.timecamp.com/app#/timesheets/timer/{x.strftime("%Y-%m-%d")}" target="_blank"><button>View in TimeCamp</button></a>'
-                )
-
-                # Display the DataFrame with the new button column
-                st.write(
-                    display_df.to_html(escape=False, index=False),
+                    .set_table_styles(
+                        [
+                            {
+                                "selector": "th",
+                                "props": [
+                                    ("font-size", "110%"),
+                                    ("text-align", "center"),
+                                ],
+                            }
+                        ]
+                    )
+                    .to_html(escape=False),
                     unsafe_allow_html=True,
                 )
 
