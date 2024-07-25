@@ -41,14 +41,19 @@ def get_israeli_holidays(year):
     return {date.strftime("%Y-%m-%d"): name for date, name in il_holidays.items()}
 
 
-@st.cache_data(ttl=3600)
 def fetch_data(api_key, year, month):
     first_day = datetime(year, month, 1)
-    last_day = (
-        first_day.replace(day=1, month=month % 12 + 1) - timedelta(days=1)
-        if month < 12
-        else datetime(year + 1, 1, 1) - timedelta(days=1)
-    )
+
+    # Adjust the last day to today if it's the current month and year
+    if year == datetime.now().year and month == datetime.now().month:
+        last_day = datetime.now()
+    else:
+        last_day = (
+            first_day.replace(day=1, month=month % 12 + 1) - timedelta(days=1)
+            if month < 12
+            else datetime(year + 1, 1, 1) - timedelta(days=1)
+        )
+
     date_range = [
         first_day + timedelta(days=i) for i in range((last_day - first_day).days + 1)
     ]
