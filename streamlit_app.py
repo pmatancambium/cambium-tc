@@ -3,11 +3,13 @@ import requests
 import pandas as pd
 from datetime import datetime, timedelta
 import plotly.express as px
+import holidays
+import calendar
 
 # Set page config
 st.set_page_config(page_title="TimeCamp Employee Status", layout="wide")
 
-# Custom CSS
+# Custom CSS (unchanged)
 st.markdown(
     """
 <style>
@@ -18,6 +20,15 @@ st.markdown(
         font-size:20px !important;
         font-weight: bold;
     }
+    .holiday-list {
+        background-color: #e1e4e8;
+        border-radius: 5px;
+        padding: 10px;
+        margin-bottom: 20px;
+    }
+    .holiday-item {
+        margin: 5px 0;
+    }
 </style>
 """,
     unsafe_allow_html=True,
@@ -25,21 +36,37 @@ st.markdown(
 
 
 @st.cache_data(ttl=3600)
-def fetch_data(api_key):
-    today = datetime.today()
-    first_day = today.replace(day=1)
+def get_israeli_holidays(year):
+    il_holidays = holidays.IL(years=year)
+    return {date.strftime("%Y-%m-%d"): name for date, name in il_holidays.items()}
+
+
+@st.cache_data(ttl=3600)
+def fetch_data(api_key, year, month):
+    first_day = datetime(year, month, 1)
+    last_day = (
+        first_day.replace(day=1, month=month % 12 + 1) - timedelta(days=1)
+        if month < 12
+        else datetime(year + 1, 1, 1) - timedelta(days=1)
+    )
     date_range = [
-        first_day + timedelta(days=i) for i in range((today - first_day).days + 1)
+        first_day + timedelta(days=i) for i in range((last_day - first_day).days + 1)
     ]
+
+    # Get Israeli holidays for the selected year
+    il_holidays = get_israeli_holidays(year)
 
     results = []
 
     for date in date_range:
-        if date.weekday() in {6, 0, 1, 2, 3}:  # Sunday to Thursday
+        if (
+            date.weekday() in {6, 0, 1, 2, 3}
+            and date.strftime("%Y-%m-%d") not in il_holidays
+        ):  # Sunday to Thursday, excluding holidays
             work_hours = get_work_hours(api_key, date)
             results.append((date, work_hours))
 
-    return results
+    return results, il_holidays
 
 
 def get_work_hours(api_key, date):
@@ -59,6 +86,28 @@ def get_work_hours(api_key, date):
         return None
 
 
+def display_holidays(il_holidays, year, month):
+    selected_month_holidays = {
+        date: name
+        for date, name in il_holidays.items()
+        if datetime.strptime(date, "%Y-%m-%d").month == month
+        and datetime.strptime(date, "%Y-%m-%d").year == year
+    }
+
+    if selected_month_holidays:
+        st.subheader(f"Holidays in {calendar.month_name[month]} {year}")
+        st.markdown('<div class="holiday-list">', unsafe_allow_html=True)
+        for date, holiday_name in selected_month_holidays.items():
+            formatted_date = datetime.strptime(date, "%Y-%m-%d").strftime("%d %B")
+            st.markdown(
+                f'<div class="holiday-item">🗓 {formatted_date}: {holiday_name}</div>',
+                unsafe_allow_html=True,
+            )
+        st.markdown("</div>", unsafe_allow_html=True)
+    else:
+        st.info(f"There are no holidays in {calendar.month_name[month]} {year}.")
+
+
 def main():
     st.title("TimeCamp Employee Status")
 
@@ -66,12 +115,24 @@ def main():
     st.sidebar.header("Settings")
     api_key = st.sidebar.text_input("API Key:", type="password")
 
+    # Year and Month selection
+    current_year = datetime.now().year
+    year = st.sidebar.selectbox(
+        "Select Year", range(current_year - 2, current_year + 3)
+    )
+    month = st.sidebar.selectbox(
+        "Select Month", range(1, 13), format_func=lambda x: calendar.month_name[x]
+    )
+
     if st.sidebar.button("Fetch Data"):
         if not api_key:
             st.sidebar.error("Please enter an API key.")
         else:
             with st.spinner("Fetching data..."):
-                data = fetch_data(api_key)
+                data, il_holidays = fetch_data(api_key, year, month)
+
+            # Display holidays for the selected month
+            display_holidays(il_holidays, year, month)
 
             if data:
                 df = pd.DataFrame(data, columns=["Date", "Hours"])
@@ -119,7 +180,9 @@ def main():
                     st.metric("Days with Warnings", warning_days)
 
                 # Visualizations
-                st.subheader("Daily Work Hours")
+                st.subheader(
+                    f"Daily Work Hours for {calendar.month_name[month]} {year}"
+                )
                 fig = px.bar(
                     df,
                     x="Date",
