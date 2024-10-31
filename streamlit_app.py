@@ -46,7 +46,9 @@ st.markdown(
 @st.cache_data(ttl=3600)
 def get_israeli_holidays(year):
     il_holidays = holidays.IL(years=year)
-    return {date.strftime("%Y-%m-%d"): name for date, name in il_holidays.items()}
+    return {
+        date.strftime("%Y-%m-%d"): name for date, name in il_holidays.items()
+    }
 
 
 def is_holiday_eve(date, il_holidays):
@@ -60,23 +62,23 @@ def get_required_hours(date, il_holidays):
     """Determine required work hours based on day and holiday status"""
     date_str = date.strftime("%Y-%m-%d")
     weekday = date.weekday()
-    
+
     # Friday (4) and Saturday (5) - no work
     if weekday in {4, 5}:
         return 0
-    
+
     # Check if it's a holiday
     if date_str in il_holidays:
         return 0
-    
+
     # Check if it's a holiday eve
     if is_holiday_eve(date, il_holidays):
         return 7.5
-    
+
     # Thursday (3)
     if weekday == 3:
         return 8
-    
+
     # Sunday (6) to Wednesday (2)
     return 8.5
 
@@ -95,7 +97,8 @@ def fetch_data(api_key, year, month):
         )
 
     date_range = [
-        first_day + timedelta(days=i) for i in range((last_day - first_day).days + 1)
+        first_day + timedelta(days=i)
+        for i in range((last_day - first_day).days + 1)
     ]
 
     # Get Israeli holidays for the selected year
@@ -106,7 +109,7 @@ def fetch_data(api_key, year, month):
     for date in date_range:
         # Check required hours for this date
         required_hours = get_required_hours(date, il_holidays)
-        
+
         # Only fetch data if work is required on this day
         if required_hours > 0:
             work_hours, tasks = get_work_hours_and_tasks(api_key, date)
@@ -117,7 +120,10 @@ def fetch_data(api_key, year, month):
 
 def get_work_hours_and_tasks(api_key, date):
     url = "https://app.timecamp.com/third_party/api/entries"
-    headers = {"Authorization": f"Bearer {api_key}", "Accept": "application/json"}
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Accept": "application/json",
+    }
     params = {
         "from": date.strftime("%Y-%m-%d"),
         "to": date.strftime("%Y-%m-%d"),
@@ -145,14 +151,18 @@ def display_holidays(il_holidays, year, month):
         st.subheader(f"Holidays in {calendar.month_name[month]} {year}")
         st.markdown('<div class="holiday-list">', unsafe_allow_html=True)
         for date, holiday_name in selected_month_holidays.items():
-            formatted_date = datetime.strptime(date, "%Y-%m-%d").strftime("%d %B")
+            formatted_date = datetime.strptime(date, "%Y-%m-%d").strftime(
+                "%d %B"
+            )
             st.markdown(
                 f'<div class="holiday-item">🗓 {formatted_date}: {holiday_name}</div>',
                 unsafe_allow_html=True,
             )
         st.markdown("</div>", unsafe_allow_html=True)
     else:
-        st.info(f"There are no holidays in {calendar.month_name[month]} {year}.")
+        st.info(
+            f"There are no holidays in {calendar.month_name[month]} {year}."
+        )
 
 
 def main():
@@ -178,7 +188,9 @@ def main():
     # Add a date range picker for custom date selection
     use_custom_date = st.sidebar.checkbox("Use custom date range")
     if use_custom_date:
-        start_date = st.sidebar.date_input("Start date", datetime(year, month, 1))
+        start_date = st.sidebar.date_input(
+            "Start date", datetime(year, month, 1)
+        )
         end_date = st.sidebar.date_input("End date", datetime(year, month, 28))
 
     if st.sidebar.button("Fetch Data"):
@@ -190,7 +202,11 @@ def main():
                     data, il_holidays = fetch_data(
                         api_key, start_date.year, start_date.month
                     )
-                    data = [d for d in data if start_date <= d[0].date() <= end_date]
+                    data = [
+                        d
+                        for d in data
+                        if start_date <= d[0].date() <= end_date
+                    ]
                 else:
                     data, il_holidays = fetch_data(api_key, year, month)
 
@@ -198,10 +214,12 @@ def main():
             display_holidays(il_holidays, year, month)
 
             if data:
-                df = pd.DataFrame(data, columns=["Date", "Hours", "Tasks", "Required Hours"])
+                df = pd.DataFrame(
+                    data, columns=["Date", "Hours", "Tasks", "Required Hours"]
+                )
                 df["Date"] = pd.to_datetime(df["Date"])
                 df["Day"] = df["Date"].dt.day_name()
-                
+
                 # Status determination based on actual vs required hours
                 df["Status"] = df.apply(
                     lambda row: (
@@ -221,7 +239,6 @@ def main():
                     ),
                     axis=1,
                 )
-
                 # Summary statistics
                 total_hours = df["Hours"].sum()
                 total_missing = df["Missing Hours"].sum()
@@ -236,47 +253,19 @@ def main():
                     st.metric("Days with Warnings", warning_days)
                 with col4:
                     avg_hours_per_day = total_hours / len(df)
-                    st.metric("Average Hours per Day", f"{avg_hours_per_day:.2f}")
+                    st.metric(
+                        "Average Hours per Day", f"{avg_hours_per_day:.2f}"
+                    )
 
-                # Visualizations
-                st.subheader(
-                    f"Daily Work Hours for {calendar.month_name[month]} {year}"
-                )
-                fig = px.bar(
-                    df,
-                    x="Date",
-                    y="Hours",
-                    color="Status",
-                    hover_data=["Day", "Required Hours", "Missing Hours", "Tasks"],
-                    labels={"Hours": "Work Hours"},
-                    color_discrete_map={"OK": "green", "Warning": "red"},
-                )
-                fig.add_scatter(
-                    x=df["Date"],
-                    y=df["Required Hours"],
-                    mode="lines",
-                    name="Required Hours",
-                    line=dict(color="blue", dash="dash"),
-                )
-                st.plotly_chart(fig, use_container_width=True)
-
-                # Task Analysis
-                st.subheader("Task Analysis")
-                all_tasks = [task for tasks in df["Tasks"] for task in tasks]
-                task_counts = pd.Series(all_tasks).value_counts()
-                fig_tasks = px.pie(
-                    values=task_counts.values,
-                    names=task_counts.index,
-                    title="Task Distribution",
-                )
-                st.plotly_chart(fig_tasks, use_container_width=True)
-
-                # Detailed table
                 st.subheader("Detailed Work Log")
 
                 def color_status(row):
                     return [
-                        "background-color: yellow" if row.Status == "Warning" else ""
+                        (
+                            "background-color: yellow"
+                            if row.Status == "Warning"
+                            else ""
+                        )
                         for _ in row
                     ]
 
@@ -309,6 +298,46 @@ def main():
                     .to_html(escape=False),
                     unsafe_allow_html=True,
                 )
+
+                # Visualizations
+                st.subheader(
+                    f"Daily Work Hours for {calendar.month_name[month]} {year}"
+                )
+                fig = px.bar(
+                    df,
+                    x="Date",
+                    y="Hours",
+                    color="Status",
+                    hover_data=[
+                        "Day",
+                        "Required Hours",
+                        "Missing Hours",
+                        "Tasks",
+                    ],
+                    labels={"Hours": "Work Hours"},
+                    color_discrete_map={"OK": "green", "Warning": "red"},
+                )
+                fig.add_scatter(
+                    x=df["Date"],
+                    y=df["Required Hours"],
+                    mode="lines",
+                    name="Required Hours",
+                    line=dict(color="blue", dash="dash"),
+                )
+                st.plotly_chart(fig, use_container_width=True)
+
+                # Task Analysis
+                st.subheader("Task Analysis")
+                all_tasks = [task for tasks in df["Tasks"] for task in tasks]
+                task_counts = pd.Series(all_tasks).value_counts()
+                fig_tasks = px.pie(
+                    values=task_counts.values,
+                    names=task_counts.index,
+                    title="Task Distribution",
+                )
+                st.plotly_chart(fig_tasks, use_container_width=True)
+
+                # Detailed table
 
             else:
                 st.error(
