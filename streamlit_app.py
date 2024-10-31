@@ -116,7 +116,57 @@ def fetch_data(api_key, year, month):
             work_hours, tasks = get_work_hours_and_tasks(api_key, date)
             results.append((date, work_hours, tasks, required_hours))
 
-    return results, il_holidays
+    if results:
+        df = pd.DataFrame(
+            results, columns=["Date", "Hours", "Tasks", "Required Hours"]
+        )
+        df["Date"] = pd.to_datetime(df["Date"])
+        df["Day"] = df["Date"].dt.day_name()
+
+        # Apply running balance calculations
+        df = df.sort_values("Date")
+
+        # Calculate daily difference (actual - required)
+        df["Daily Difference"] = df["Hours"].fillna(0) - df["Required Hours"]
+
+        # Calculate running balance and target
+        df["Running Balance"] = df["Daily Difference"].cumsum()
+        df["Target Balance"] = -df[
+            "Required Hours"
+        ].cumsum()  # Negative because we start at 0 and accumulate required hours
+
+        # Update status based on running balance
+        df["Status"] = df.apply(
+            lambda row: (
+                "OK"
+                if (
+                    pd.notnull(row["Hours"])
+                    and (
+                        (
+                            row["Running Balance"] >= row["Target Balance"]
+                            and row["Hours"] <= 11.5
+                        )
+                        or (
+                            row["Running Balance"] < row["Target Balance"]
+                            and row["Hours"] >= row["Required Hours"]
+                        )
+                    )
+                )
+                else "Warning"
+            ),
+            axis=1,
+        )
+
+        # Calculate missing hours only for the final day if running balance is below target
+        df["Missing Hours"] = 0  # Initialize all days to 0
+        final_gap = (
+            df["Running Balance"].iloc[-1] - df["Target Balance"].iloc[-1]
+        )
+        if final_gap < 0:
+            df.loc[df.index[-1], "Missing Hours"] = abs(final_gap)
+
+        return df, il_holidays
+    return pd.DataFrame(), il_holidays
 
 
 def get_work_hours_and_tasks(api_key, date):
@@ -138,6 +188,48 @@ def get_work_hours_and_tasks(api_key, date):
         return total_seconds / 3600, tasks
     else:
         return None, []
+
+
+def calculate_running_balance(df):
+    """Calculate running balance of work hours"""
+    df = df.sort_values("Date")
+
+    # Calculate daily difference (actual - required)
+    df["Daily Difference"] = df["Hours"].fillna(0) - df["Required Hours"]
+
+    # Calculate running balance
+    df["Running Balance"] = df["Daily Difference"].cumsum()
+
+    # Update status based on running balance
+    df["Status"] = df.apply(
+        lambda row: (
+            "OK"
+            if (
+                pd.notnull(row["Hours"])
+                and (
+                    (row["Running Balance"] >= 0 and row["Hours"] <= 11.5)
+                    or (
+                        row["Running Balance"] < 0
+                        and row["Hours"] >= row["Required Hours"]
+                    )
+                )
+            )
+            else "Warning"
+        ),
+        axis=1,
+    )
+
+    # Recalculate missing hours considering running balance
+    df["Missing Hours"] = df.apply(
+        lambda row: (
+            abs(row["Running Balance"])
+            if row["Running Balance"] < 0 and row["Date"] == row["Date"].max()
+            else 0
+        ),
+        axis=1,
+    )
+
+    return df
 
 
 def display_holidays(il_holidays, year, month):
@@ -219,64 +311,48 @@ def main():
         else:
             with st.spinner("Fetching data..."):
                 if use_custom_date:
-                    data, il_holidays = fetch_data(
+                    df, il_holidays = fetch_data(
                         api_key, start_date.year, start_date.month
                     )
-                    data = [
-                        d
-                        for d in data
-                        if start_date <= d[0].date() <= end_date
+                    df = df[
+                        (df["Date"].dt.date >= start_date)
+                        & (df["Date"].dt.date <= end_date)
                     ]
                 else:
-                    data, il_holidays = fetch_data(api_key, year, month)
+                    df, il_holidays = fetch_data(api_key, year, month)
 
             # Display holidays for the selected month
             display_holidays(il_holidays, year, month)
 
-            if data:
-                df = pd.DataFrame(
-                    data, columns=["Date", "Hours", "Tasks", "Required Hours"]
-                )
-                df["Date"] = pd.to_datetime(df["Date"])
-                df["Day"] = df["Date"].dt.day_name()
-
-                # Status determination based on actual vs required hours
-                df["Status"] = df.apply(
-                    lambda row: (
-                        "OK"
-                        if pd.notnull(row["Hours"])
-                        and row["Required Hours"] <= row["Hours"] <= 11.5
-                        else "Warning"
-                    ),
-                    axis=1,
-                )
-
-                df["Missing Hours"] = df.apply(
-                    lambda row: (
-                        max(0, row["Required Hours"] - (row["Hours"] or 0))
-                        if pd.notnull(row["Hours"])
-                        else row["Required Hours"]
-                    ),
-                    axis=1,
-                )
-                # Summary statistics
+            if not df.empty:
+                # Summary statistics with running balance
                 total_hours = df["Hours"].sum()
-                total_missing = df["Missing Hours"].sum()
+                final_balance = df["Running Balance"].iloc[-1]
+                missing_hours = abs(final_balance) if final_balance < 0 else 0
                 warning_days = df[df["Status"] == "Warning"].shape[0]
 
-                col1, col2, col3, col4 = st.columns(4)
+                # Display metrics
+                col1, col2, col3, col4, col5 = st.columns(5)
                 with col1:
                     st.metric("Total Hours Worked", f"{total_hours:.2f}")
                 with col2:
-                    st.metric("Total Missing Hours", f"{total_missing:.2f}")
+                    st.metric(
+                        "Running Balance",
+                        f"{final_balance:.2f}",
+                        delta=f"{final_balance:.2f}",
+                        delta_color="normal",
+                    )
                 with col3:
-                    st.metric("Days with Warnings", warning_days)
+                    st.metric("Missing Hours", f"{missing_hours:.2f}")
                 with col4:
+                    st.metric("Days with Warnings", warning_days)
+                with col5:
                     avg_hours_per_day = total_hours / len(df)
                     st.metric(
                         "Average Hours per Day", f"{avg_hours_per_day:.2f}"
                     )
 
+                # Display detailed table with running balance
                 st.subheader("Detailed Work Log")
 
                 def color_status(row):
@@ -289,21 +365,22 @@ def main():
                         for _ in row
                     ]
 
-                def text_color_status(row):
-                    return [
-                        (
-                            "color: black"
-                            if row.Status == "Warning"
-                            else "color: white"
-                        )
-                        for _ in row
-                    ]
+                display_columns = [
+                    "Date",
+                    "Day",
+                    "Hours",
+                    "Required Hours",
+                    "Daily Difference",
+                    "Running Balance",
+                    "Status",
+                    "Tasks",
+                ]
 
-                styled_df = df.style.apply(color_status, axis=1).apply(
-                    text_color_status, axis=1
+                styled_df = df[display_columns].style.apply(
+                    color_status, axis=1
                 )
-                # styled_df = df.style.apply(color_status, axis=1)
 
+                # Add TimeCamp link
                 df["TimeCamp Link"] = df["Date"].apply(
                     lambda x: f'<a href="https://app.timecamp.com/app#/timesheets/timer/{x.strftime("%Y-%m-%d")}" target="_blank"><button>View in TimeCamp</button></a>'
                 )
@@ -314,21 +391,10 @@ def main():
                             "Date": lambda x: x.strftime("%Y-%m-%d"),
                             "Hours": "{:.2f}",
                             "Required Hours": "{:.2f}",
-                            "Missing Hours": "{:.2f}",
+                            "Daily Difference": "{:.2f}",
+                            "Running Balance": "{:.2f}",
                         }
-                    )
-                    .set_table_styles(
-                        [
-                            {
-                                "selector": "th",
-                                "props": [
-                                    ("font-size", "110%"),
-                                    ("text-align", "center"),
-                                ],
-                            }
-                        ]
-                    )
-                    .to_html(escape=False),
+                    ).to_html(escape=False),
                     unsafe_allow_html=True,
                 )
 
@@ -336,7 +402,9 @@ def main():
                 st.subheader(
                     f"Daily Work Hours for {calendar.month_name[month]} {year}"
                 )
-                fig = px.bar(
+
+                # Hours bar chart
+                fig1 = px.bar(
                     df,
                     x="Date",
                     y="Hours",
@@ -344,33 +412,21 @@ def main():
                     hover_data=[
                         "Day",
                         "Required Hours",
-                        "Missing Hours",
+                        "Running Balance",
                         "Tasks",
                     ],
                     labels={"Hours": "Work Hours"},
                     color_discrete_map={"OK": "green", "Warning": "red"},
                 )
-                fig.add_scatter(
+                fig1.add_scatter(
                     x=df["Date"],
                     y=df["Required Hours"],
                     mode="lines",
                     name="Required Hours",
                     line=dict(color="blue", dash="dash"),
                 )
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig1, use_container_width=True)
 
-                # Task Analysis
-                st.subheader("Task Analysis")
-                all_tasks = [task for tasks in df["Tasks"] for task in tasks]
-                task_counts = pd.Series(all_tasks).value_counts()
-                fig_tasks = px.pie(
-                    values=task_counts.values,
-                    names=task_counts.index,
-                    title="Task Distribution",
-                )
-                st.plotly_chart(fig_tasks, use_container_width=True)
-
-                # Detailed table
 
             else:
                 st.error(
