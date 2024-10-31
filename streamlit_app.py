@@ -36,6 +36,7 @@ st.markdown(
     }
     .highlight-warning {
         background-color: yellow !important;
+        color: black !important;
     }
 </style>
 """,
@@ -193,7 +194,26 @@ def main():
         )
         end_date = st.sidebar.date_input("End date", datetime(year, month, 28))
 
-    if st.sidebar.button("Fetch Data"):
+    fetch_button = st.sidebar.button("Fetch Data")
+    if not fetch_button:
+        st.markdown(
+            """
+        <div class="api-instructions">
+            <h3>How to Get Your TimeCamp API Key</h3>
+            <div class="instruction-step">1. Log in to your TimeCamp account at <a href="https://app.timecamp.com" target="_blank">app.timecamp.com</a></div>
+            <div class="instruction-step">2. Click on your profile picture in the top-right corner</div>
+            <div class="instruction-step">3. Select "Profile Settings" from the dropdown menu</div>
+            <div class="instruction-step">4. Scroll down to "Your programming API token"</div>
+            <div class="instruction-step">5. Copy your API token</div>
+            <div class="instruction-step">6. Paste the token in the API Key field in the sidebar</div>
+            <br>
+            <em>Note: Your API key is stored securely and is only used to fetch your time entries from TimeCamp.</em>
+        </div>
+        """,
+            unsafe_allow_html=True,
+        )
+
+    if fetch_button:
         if not api_key:
             st.sidebar.error("Please enter an API key.")
         else:
@@ -269,7 +289,20 @@ def main():
                         for _ in row
                     ]
 
-                styled_df = df.style.apply(color_status, axis=1)
+                def text_color_status(row):
+                    return [
+                        (
+                            "color: black"
+                            if row.Status == "Warning"
+                            else "color: white"
+                        )
+                        for _ in row
+                    ]
+
+                styled_df = df.style.apply(color_status, axis=1).apply(
+                    text_color_status, axis=1
+                )
+                # styled_df = df.style.apply(color_status, axis=1)
 
                 df["TimeCamp Link"] = df["Date"].apply(
                     lambda x: f'<a href="https://app.timecamp.com/app#/timesheets/timer/{x.strftime("%Y-%m-%d")}" target="_blank"><button>View in TimeCamp</button></a>'
