@@ -49,6 +49,38 @@ def get_israeli_holidays(year):
     return {date.strftime("%Y-%m-%d"): name for date, name in il_holidays.items()}
 
 
+def is_holiday_eve(date, il_holidays):
+    """Check if the given date is a holiday eve"""
+    next_day = date + timedelta(days=1)
+    next_day_str = next_day.strftime("%Y-%m-%d")
+    return next_day_str in il_holidays
+
+
+def get_required_hours(date, il_holidays):
+    """Determine required work hours based on day and holiday status"""
+    date_str = date.strftime("%Y-%m-%d")
+    weekday = date.weekday()
+    
+    # Friday (4) and Saturday (5) - no work
+    if weekday in {4, 5}:
+        return 0
+    
+    # Check if it's a holiday
+    if date_str in il_holidays:
+        return 0
+    
+    # Check if it's a holiday eve
+    if is_holiday_eve(date, il_holidays):
+        return 7.5
+    
+    # Thursday (3)
+    if weekday == 3:
+        return 8
+    
+    # Sunday (6) to Wednesday (2)
+    return 8.5
+
+
 def fetch_data(api_key, year, month):
     first_day = datetime(year, month, 1)
 
@@ -72,12 +104,13 @@ def fetch_data(api_key, year, month):
     results = []
 
     for date in date_range:
-        if (
-            date.weekday() in {6, 0, 1, 2, 3}
-            and date.strftime("%Y-%m-%d") not in il_holidays
-        ):  # Sunday to Thursday, excluding holidays
+        # Check required hours for this date
+        required_hours = get_required_hours(date, il_holidays)
+        
+        # Only fetch data if work is required on this day
+        if required_hours > 0:
             work_hours, tasks = get_work_hours_and_tasks(api_key, date)
-            results.append((date, work_hours, tasks))
+            results.append((date, work_hours, tasks, required_hours))
 
     return results, il_holidays
 
@@ -165,26 +198,16 @@ def main():
             display_holidays(il_holidays, year, month)
 
             if data:
-                df = pd.DataFrame(data, columns=["Date", "Hours", "Tasks"])
+                df = pd.DataFrame(data, columns=["Date", "Hours", "Tasks", "Required Hours"])
                 df["Date"] = pd.to_datetime(df["Date"])
                 df["Day"] = df["Date"].dt.day_name()
-                df["Min Hours"] = df["Day"].map(
-                    {
-                        "Thursday": 8,
-                        "Friday": 8,
-                        "Saturday": 8,
-                        "Sunday": 8.5,
-                        "Monday": 8.5,
-                        "Tuesday": 8.5,
-                        "Wednesday": 8.5,
-                    }
-                )
-
+                
+                # Status determination based on actual vs required hours
                 df["Status"] = df.apply(
                     lambda row: (
                         "OK"
                         if pd.notnull(row["Hours"])
-                        and row["Min Hours"] <= row["Hours"] <= 11.5
+                        and row["Required Hours"] <= row["Hours"] <= 11.5
                         else "Warning"
                     ),
                     axis=1,
@@ -192,9 +215,9 @@ def main():
 
                 df["Missing Hours"] = df.apply(
                     lambda row: (
-                        max(0, row["Min Hours"] - (row["Hours"] or 0))
+                        max(0, row["Required Hours"] - (row["Hours"] or 0))
                         if pd.notnull(row["Hours"])
-                        else row["Min Hours"]
+                        else row["Required Hours"]
                     ),
                     axis=1,
                 )
@@ -224,15 +247,15 @@ def main():
                     x="Date",
                     y="Hours",
                     color="Status",
-                    hover_data=["Day", "Min Hours", "Missing Hours", "Tasks"],
+                    hover_data=["Day", "Required Hours", "Missing Hours", "Tasks"],
                     labels={"Hours": "Work Hours"},
                     color_discrete_map={"OK": "green", "Warning": "red"},
                 )
                 fig.add_scatter(
                     x=df["Date"],
-                    y=df["Min Hours"],
+                    y=df["Required Hours"],
                     mode="lines",
-                    name="Minimum Hours",
+                    name="Required Hours",
                     line=dict(color="blue", dash="dash"),
                 )
                 st.plotly_chart(fig, use_container_width=True)
@@ -251,28 +274,24 @@ def main():
                 # Detailed table
                 st.subheader("Detailed Work Log")
 
-                # Function to apply color to Status column
                 def color_status(row):
                     return [
                         "background-color: yellow" if row.Status == "Warning" else ""
                         for _ in row
                     ]
 
-                # Apply styling
                 styled_df = df.style.apply(color_status, axis=1)
 
-                # Create a new DataFrame with the styled data and an additional column for the button
                 df["TimeCamp Link"] = df["Date"].apply(
                     lambda x: f'<a href="https://app.timecamp.com/app#/timesheets/timer/{x.strftime("%Y-%m-%d")}" target="_blank"><button>View in TimeCamp</button></a>'
                 )
 
-                # Display the DataFrame with the new button column
                 st.write(
                     styled_df.format(
                         {
                             "Date": lambda x: x.strftime("%Y-%m-%d"),
                             "Hours": "{:.2f}",
-                            "Min Hours": "{:.2f}",
+                            "Required Hours": "{:.2f}",
                             "Missing Hours": "{:.2f}",
                         }
                     )
